@@ -7,7 +7,7 @@ from urllib.parse import urlparse, unquote, parse_qs
 
 # === CONFIG ===
 TARGET = "https://gesseh.com"
-GOOGLE_VERIFY = "<meta name="google-site-verification" content="4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE" />"
+GOOGLE_VERIFY = "<meta name='google-site-verification' content='4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE' />"
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
 HEADER_BOX = ""
 
@@ -211,5 +211,4 @@ class handler(BaseHTTPRequestHandler):
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(f"Error: {str(e)}".encode())
-
             return
