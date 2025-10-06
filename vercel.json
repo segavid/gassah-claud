@@ -5,5 +5,23 @@
       "src": "api/index.py",
       "use": "@vercel/python"
     }
+  ],
+  "routes": [
+    {
+      "src": "/wp-content/(.*)",
+      "dest": "https://gesseh.com/wp-content/$1"
+    },
+    {
+      "src": "/wp-includes/(.*)",
+      "dest": "https://gesseh.com/wp-includes/$1"
+    },
+    {
+      "src": "/(.*\\.(css|js|jpg|jpeg|png|gif|svg|ico|woff|woff2|ttf|eot|webp))",
+      "dest": "https://gesseh.com/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.py"
+    }
   ]
 }
