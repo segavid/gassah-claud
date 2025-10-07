@@ -31,9 +31,9 @@ def build_server_url(server):
     if re.match(r"^https?://", sid, re.I):
         return sid
     if "estream" in name:
-        return f"https://arabveturk.com/embed-{sid}.html"
+        return f"https://arabveturk.com/{sid}.html"
     if "arab" in name:
-        return f"https://v.turkvearab.com/embed-{sid}.html"
+        return f"https://v.turkvearab.com/{sid}.html"
     if "ok" in name:
         return f"https://ok.ru/videoembed/{sid}"
     if "red" in name:
@@ -215,3 +215,4 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"Error: {str(e)}".encode())
             return
+
