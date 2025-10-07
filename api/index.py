@@ -1,59 +1,89 @@
-from http.server import BaseHTTPRequestHandler
 import json
-import re
 import base64
+import re
+import urllib.parse
 import urllib.request
-from urllib.parse import urlparse, unquote, parse_qs
+from typing import Dict, Any, Optional
+from http import HTTPStatus
 
-# === CONFIG ===
-TARGET = "https://gesseh.com"
-GOOGLE_VERIFY = "<meta name='google-site-verification' content='4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE' />"
+TARGET = "https://gesseh.net"
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
-HEADER_BOX = ""
+GOOGLE_VERIFY = "<meta name='google-site-verification' content='HWrhtgkCPV2OT-OWRzV60Vdl1pWxt35-aEZ7NNDTHWs' />"
+HEADER_BOX = """
+<div style="width:100%;background:#ff004c;color:#fff;padding:15px;text-align:center;font-size:20px;font-weight:bold;direction:rtl;">
+  <a href="https://z.3isk.news/all-turkish-series-esheeq/" style="color:#fff;text-decoration:none;">مسلسلات تركية مترجمة</a>
+</div>
+"""
 
-NO_CACHE_HEADERS = {
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0"
-}
-
-# === HELPERS ===
-def base64_decode(s):
+# === Helpers ===
+def base64_decode(encoded_str: str) -> Optional[str]:
     try:
-        normalized = s.replace(" ", "").replace("%3D", "=").replace("-", "+").replace("_", "/")
-        return base64.b64decode(normalized).decode("utf-8", errors="ignore")
+        normalized = re.sub(r'\s+', '', encoded_str).replace('%3D', '=')
+        normalized = normalized.replace('-', '+').replace('_', '/')
+        padding = len(normalized) % 4
+        if padding:
+            normalized += '=' * (4 - padding)
+        decoded_bytes = base64.b64decode(normalized)
+        decoded_str = urllib.parse.unquote(decoded_bytes.decode('utf-8'))
+        return decoded_str
     except Exception:
         return None
 
-def build_server_url(server):
-    name = (server.get("name") or "").lower()
-    sid = server.get("id", "")
-    if re.match(r"^https?://", sid, re.I):
-        return sid
-    if "estream" in name:
-        return f"https://arabveturk.com/{sid}.html"
-    if "arab" in name:
-        return f"https://v.turkvearab.com/{sid}.html"
-    if "ok" in name:
-        return f"https://ok.ru/videoembed/{sid}"
-    if "red" in name:
-        return f"https://iplayerhls.com/e/{sid}"
-    return sid
 
-def get_worker_domain(headers, host):
-    proto = headers.get('x-forwarded-proto', ['https'])[0] if isinstance(headers.get('x-forwarded-proto'), list) else headers.get('x-forwarded-proto', 'https')
-    return f"{proto}://{host}"
+def build_server_url(server: Dict[str, str]) -> str:
+    name = (server.get('name') or '').lower()
+    server_id = server.get('id') or ''
+    if re.match(r'^https?://', server_id, re.IGNORECASE):
+        return server_id
+    if 'estream' in name:
+        return f"https://arabveturk.com/{server_id}.html"
+    if 'arab' in name:
+        return f"https://v.turkvearab.com/{server_id}.html"
+    if 'ok' in name:
+        return f"https://ok.ru/videoembed/{server_id}"
+    if 'red' in name:
+        return f"https://iplayerhls.com/e/{server_id}"
+    if 'dailymotion' in name:
+        return f"https://www.dailymotion.com/embed/video/{server_id}"
+    if 'express' in name:
+        return server_id
+    return server_id
 
-def replace_episode_links(match, worker_domain):
-    before, quote, encoded, after = match.groups()
-    decoded = base64_decode(unquote(encoded))
+
+def replace_embed_with_buttons(match: re.Match, worker_domain: str) -> str:
+    encoded_post = match.group(1)
+    decoded = base64_decode(encoded_post)
     if not decoded:
         return match.group(0)
-    clean_url = re.sub(r"https?://(?:www\.)?gesseh\.(com|net)", worker_domain, decoded, flags=re.I)
-    return f'<a {before}href="{clean_url}"{after}>'
+    try:
+        data = json.loads(decoded)
+    except json.JSONDecodeError:
+        return match.group(0)
+    servers = []
+    for s in data.get('servers', []):
+        url = build_server_url(s)
+        if url:
+            servers.append({'name': s.get('name', ''), 'url': url})
+    if not servers:
+        return match.group(0)
+    buttons_html = []
+    for s in servers:
+        safe_url = s['url'].replace('"', '&quot;')
+        safe_name = s['name'].replace('<', '&lt;').replace('>', '&gt;')
+        buttons_html.append(f'<a href="{safe_url}" target="_blank" class="server-btn">{safe_name} - اضغط هنا للمشاهدة</a>')
+    return f"""
+<div class="servers-container">
+  <style>
+    .servers-container{{max-width:800px;margin:20px auto;padding:20px;background:#f5f5f5;border-radius:10px}}
+    .server-btn{{display:block;background:#ff004c;color:#fff;padding:15px;margin:10px 0;text-align:center;text-decoration:none;border-radius:8px;font-size:18px;font-weight:bold;transition:all 0.3s}}
+    .server-btn:hover{{background:#cc0039;transform:scale(1.02)}}
+  </style>
+  {''.join(buttons_html)}
+</div>"""
 
-def replace_player_block(match, worker_domain):
-    enc_match = re.search(r"post=([^\"'\s]+)", match.group(0), re.I)
+
+def replace_fake_block_with_urls(match: re.Match, worker_domain: str) -> str:
+    enc_match = re.search(r'post=([^"\'\s]+)', match.group(0), re.IGNORECASE)
     if not enc_match:
         return match.group(0)
     decoded = base64_decode(enc_match.group(1))
@@ -61,29 +91,25 @@ def replace_player_block(match, worker_domain):
         return match.group(0)
     try:
         data = json.loads(decoded)
-    except Exception:
+    except json.JSONDecodeError:
         return match.group(0)
-
     servers = []
-    for s in data.get("servers", []):
+    for s in data.get('servers', []):
         url = build_server_url(s)
         if url:
-            servers.append({"name": s.get("name", ""), "url": url})
-
+            servers.append({'name': s.get('name', ''), 'url': url})
     if not servers:
         return match.group(0)
-
     servers_html = []
     for i, s in enumerate(servers):
-        safe_url = s["url"].replace('"', "&quot;")
-        safe_name = s["name"].replace("<", "&lt;").replace(">", "&gt;")
+        safe_url = s['url'].replace('"', '&quot;')
+        safe_name = s['name'].replace('<', '&lt;').replace('>', '&gt;')
         servers_html.append(f"""
 <div class="srv-row">
   <b>{safe_name}</b>
   <input type="text" readonly value="{safe_url}" class="srv-url" id="u{i}">
   <button onclick="navigator.clipboard.writeText(document.getElementById('u{i}').value);this.textContent='✓'">نسخ</button>
 </div>""")
-
     player_html = f"""
 <style>
 .notice-bar{{background:#222;color:#fff;padding:10px;text-align:center;font-size:15px}}
@@ -100,119 +126,63 @@ def replace_player_block(match, worker_domain):
 """
     return player_html + '<div class="singleInfo"'
 
-# === MAIN HANDLER ===
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        try:
-            # Parse path and query
-            path = self.path.split('?')[0]
-            query = self.path.split('?')[1] if '?' in self.path else ""
-            
-            # Remove /api prefix if present
-            if path.startswith('/api'):
-                path = path[4:] or '/'
-            
-            full_query = f"?{query}" if query else ""
-            upstream = f"{TARGET}{path}{full_query}"
 
-            # Get worker domain
-            host = self.headers.get('host', 'localhost')
-            worker_domain = get_worker_domain(dict(self.headers), host)
-            canonical_url = f"{worker_domain}{path}"
-            if query:
-                canonical_url += f"?{query}"
+def process_html(body: str, worker_domain: str, canonical_url: str) -> str:
+    target_host = urllib.parse.urlparse(TARGET).hostname
+    escaped_host = re.escape(target_host)
+    body = re.sub(f'https?://{escaped_host}', worker_domain, body, flags=re.IGNORECASE)
+    body = re.sub(f'//{escaped_host}', worker_domain, body, flags=re.IGNORECASE)
+    body = re.sub(r'(src|href)=["\']/([^"\']+)["\']', rf'\1="{worker_domain}/\2"', body, flags=re.IGNORECASE)
+    body = re.sub(r'href=["\']\/(?=(?:%d9%85|مسلسل|الحلقة)[^"\']*)', f'href="{worker_domain}/', body, flags=re.IGNORECASE)
+    body = re.sub(r'<a\s+title="الرئيسية"\s+href="/">الرئيسية</a>', '<a title="قصة عشق الاصلي" href="https://z.3isk.news/video/">قصة عشق الاصلي</a>', body, flags=re.IGNORECASE)
+    body = re.sub(r'<meta[^>]*name=[\'"]robots[\'"][^>]*>', '', body, flags=re.IGNORECASE)
+    body = re.sub(r'<meta[^>]*name=[\'"]google-site-verification[\'"][^>]*>', '', body, flags=re.IGNORECASE)
+    body = re.sub(r'<link[^>]*rel=[\'"]canonical[\'"][^>]*>', '', body, flags=re.IGNORECASE)
+    body = re.sub(r'<head>', f'<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n<link rel="canonical" href="{canonical_url}" />', body, count=1, flags=re.IGNORECASE)
+    body = HEADER_BOX + "\n" + body
+    return body
 
-            print(f"Upstream: {upstream}")
 
-            req = urllib.request.Request(upstream, headers={"Referer": TARGET, "User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as response:
-                content_type = response.headers.get("Content-Type", "").lower()
-                body = response.read()
+# === Vercel entry point ===
+def handler(request, response):
+    try:
+        path = request.path
+        query_string = request.query_string.decode() if hasattr(request, "query_string") else ""
+        query_part = f"?{query_string}" if query_string else ""
+        host = request.headers.get("host", "your-domain.vercel.app")
+        worker_domain = f"https://{host}"
+        canonical_url = f"{worker_domain}{path}{query_part}"
+        upstream = TARGET + path + query_part
 
-                # Handle HTML
-                if "text/html" in content_type:
-                    body = body.decode("utf-8", errors="ignore")
+        req_headers = {
+            "Referer": TARGET,
+            "User-Agent": request.headers.get("user-agent", "Mozilla/5.0")
+        }
 
-                    # Replace all gesseh.com or gesseh.net to worker domain
-                    body = re.sub(r"https?://(?:www\.)?gesseh\.(com|net)", worker_domain, body, flags=re.I)
-                    body = re.sub(r"//(?:www\.)?gesseh\.(com|net)", worker_domain, body, flags=re.I)
-                    body = re.sub(r'(src|href)=["\']/([^"\']+)["\']', rf'\1="{worker_domain}/\2"', body, flags=re.I)
+        req = urllib.request.Request(upstream, headers=req_headers)
+        with urllib.request.urlopen(req) as resp:
+            content_type = resp.headers.get("Content-Type", "").lower()
+            body = resp.read()
 
-                    # Replace homepage link
-                    body = re.sub(
-                        r'<a\s+title="الرئيسية"\s+href="/">الرئيسية</a>',
-                        '<a title="قصة عشق الاصلي" href="https://z.3isk.news/video/">قصة عشق الاصلي</a>',
-                        body, flags=re.I
-                    )
-
-                    # Decode encoded links
-                    body = re.sub(
-                        r'<a\s+([^>]*?)href=(["\'])https?://arbandroid\.com/[^"\']+\?url=([^"\']+)\2([^>]*)>',
-                        lambda m: replace_episode_links(m, worker_domain),
-                        body, flags=re.I
-                    )
-
-                    # Replace fake block
-                    body = re.sub(
-                        r'<script[^>]*type=["\']litespeed/javascript["\'][^>]*>[\s\S]*?</script>\s*<div class="secContainer bg">[\s\S]*?<div class="singleInfo"',
-                        lambda m: replace_player_block(m, worker_domain),
-                        body, flags=re.I
-                    )
-
-                    # Remove old meta & canonical
-                    body = re.sub(r"<meta[^>]*name=['\"]robots['\"][^>]*>", "", body, flags=re.I)
-                    body = re.sub(r"<meta[^>]*name=['\"]google-site-verification['\"][^>]*>", "", body, flags=re.I)
-                    body = re.sub(r"<link[^>]*rel=['\"]canonical['\"][^>]*>", "", body, flags=re.I)
-
-                    # ✅ Inject new canonical dynamically
-                    body = re.sub(
-                        r"<head>",
-                        f"<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n<link rel='canonical' href='{canonical_url}' />",
-                        body, count=1, flags=re.I
-                    )
-
-                    # Add header banner
-                    body = HEADER_BOX + "\n" + body
-
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=UTF-8')
-                    for k, v in NO_CACHE_HEADERS.items():
-                        self.send_header(k, v)
-                    self.end_headers()
-                    self.wfile.write(body.encode('utf-8'))
-                    return
-
-                # Handle XML / RSS
-                if any(x in content_type for x in ["xml", "rss", "text/plain"]):
-                    body = body.decode("utf-8", errors="ignore")
-                    body = re.sub(r"https?://(?:www\.)?gesseh\.(com|net)", worker_domain, body, flags=re.I)
-                    body = re.sub(r"//(?:www\.)?gesseh\.(com|net)", worker_domain, body, flags=re.I)
-
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/xml; charset=UTF-8')
-                    for k, v in NO_CACHE_HEADERS.items():
-                        self.send_header(k, v)
-                    self.end_headers()
-                    self.wfile.write(body.encode('utf-8'))
-                    return
-
-                # Binary fallback
-                self.send_response(200)
-                self.send_header('Content-Type', content_type)
-                for k, v in NO_CACHE_HEADERS.items():
-                    self.send_header(k, v)
-                self.end_headers()
-                self.wfile.write(body)
+            if "text/html" in content_type:
+                body_str = body.decode("utf-8", errors="ignore")
+                processed = process_html(body_str, worker_domain, canonical_url)
+                response.status_code = HTTPStatus.OK
+                response.headers["Content-Type"] = "text/html; charset=UTF-8"
+                response.write(processed)
                 return
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.send_response(500)
-            self.send_header('Content-Type', 'text/plain')
-            for k, v in NO_CACHE_HEADERS.items():
-                self.send_header(k, v)
-            self.end_headers()
-            self.wfile.write(f"Error: {str(e)}".encode())
-            return
+            if any(x in content_type for x in ["xml", "rss", "text/plain"]):
+                body_str = body.decode("utf-8", errors="ignore")
+                response.status_code = HTTPStatus.OK
+                response.headers["Content-Type"] = "application/xml; charset=UTF-8"
+                response.write(body_str)
+                return
 
+            response.status_code = HTTPStatus.OK
+            response.headers["Content-Type"] = content_type
+            response.write(body)
+    except Exception as e:
+        response.status_code = 500
+        response.headers["Content-Type"] = "text/plain"
+        response.write(f"Error: {str(e)}")
