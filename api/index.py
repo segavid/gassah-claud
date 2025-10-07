@@ -118,7 +118,10 @@ class handler(BaseHTTPRequestHandler):
             # Get worker domain
             host = self.headers.get('host', 'localhost')
             worker_domain = get_worker_domain(dict(self.headers), host)
-            
+            canonical_url = f"{worker_domain}{path}"
+            if query:
+                canonical_url += f"?{query}"
+
             print(f"Upstream: {upstream}")
 
             req = urllib.request.Request(upstream, headers={"Referer": TARGET, "User-Agent": "Mozilla/5.0"})
@@ -161,10 +164,10 @@ class handler(BaseHTTPRequestHandler):
                     body = re.sub(r"<meta[^>]*name=['\"]google-site-verification['\"][^>]*>", "", body, flags=re.I)
                     body = re.sub(r"<link[^>]*rel=['\"]canonical['\"][^>]*>", "", body, flags=re.I)
 
-                    # Inject meta and verification tag
+                    # ✅ Inject new canonical dynamically
                     body = re.sub(
                         r"<head>",
-                        f"<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n<link rel='canonical' href='{worker_domain}/video/' />",
+                        f"<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n<link rel='canonical' href='{canonical_url}' />",
                         body, count=1, flags=re.I
                     )
 
