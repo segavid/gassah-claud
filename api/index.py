@@ -3,7 +3,7 @@ import base64
 import re
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler
+from urllib.request import Request, urlopen
 
 TARGET = "https://gesseh.net"
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
@@ -157,68 +157,81 @@ def process_html(body, worker_domain, canonical_url):
     return body
 
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        path = self.path
-        query_string = ''
-        if '?' in path:
-            path, query_string = path.split('?', 1)
-            query_string = '?' + query_string
+def handler(request, context):
+    """Vercel serverless function handler"""
+    try:
+        # Get path from request
+        path = request.get('path', '/')
+        query = request.get('query', {})
+        headers = request.get('headers', {})
         
-        # Redirect static files directly to origin (backup if vercel.json fails)
+        # Build query string
+        query_string = ''
+        if query:
+            query_string = '?' + '&'.join([f"{k}={v}" for k, v in query.items()])
+        
+        # Check for static files - redirect to origin
         static_extensions = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', 
                            '.woff', '.woff2', '.ttf', '.eot', '.webp', '.mp4', '.webm')
         if path.lower().endswith(static_extensions) or '/wp-content/' in path or '/wp-includes/' in path:
-            redirect_url = TARGET + path + query_string
-            self.send_response(301)
-            self.send_header('Location', redirect_url)
-            self.send_header('Cache-Control', 'public, max-age=31536000')
-            self.end_headers()
-            return
+            return {
+                'statusCode': 301,
+                'headers': {
+                    'Location': TARGET + path + query_string,
+                    'Cache-Control': 'public, max-age=31536000'
+                }
+            }
         
-        worker_domain = f"https://{self.headers.get('Host', 'your-domain.com')}"
+        # Build URLs
+        worker_domain = f"https://{headers.get('host', 'your-domain.vercel.app')}"
         canonical_url = f"{worker_domain}{path}{query_string}"
         upstream = TARGET + path + query_string
         
+        # Fetch from origin
         req_headers = {
             'Referer': TARGET,
-            'User-Agent': self.headers.get('User-Agent', 'Mozilla/5.0')
+            'User-Agent': headers.get('user-agent', 'Mozilla/5.0')
         }
         
-        try:
-            req = urllib.request.Request(upstream, headers=req_headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content_type = response.headers.get('Content-Type', '').lower()
-                body = response.read()
-                
-                if 'text/html' in content_type:
-                    body_str = body.decode('utf-8', errors='ignore')
-                    processed_body = process_html(body_str, worker_domain, canonical_url)
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=UTF-8')
-                    self.end_headers()
-                    self.wfile.write(processed_body.encode('utf-8'))
-                    return
-                
-                if 'xml' in content_type or 'rss' in content_type or 'text/plain' in content_type:
-                    body_str = body.decode('utf-8', errors='ignore')
-                    target_host = urllib.parse.urlparse(TARGET).hostname
-                    escaped_host = re.escape(target_host)
-                    body_str = re.sub(f'https?://{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                    body_str = re.sub(f'//{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/xml; charset=UTF-8')
-                    self.end_headers()
-                    self.wfile.write(body_str.encode('utf-8'))
-                    return
-                
-                self.send_response(200)
-                self.send_header('Content-Type', content_type)
-                self.end_headers()
-                self.wfile.write(body)
-                
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(f'Error: {str(e)}'.encode('utf-8'))
+        req = Request(upstream, headers=req_headers)
+        with urlopen(req, timeout=10) as response:
+            content_type = response.headers.get('Content-Type', '').lower()
+            body = response.read()
+            
+            # Process HTML
+            if 'text/html' in content_type:
+                body_str = body.decode('utf-8', errors='ignore')
+                processed_body = process_html(body_str, worker_domain, canonical_url)
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'text/html; charset=UTF-8'},
+                    'body': processed_body
+                }
+            
+            # Process XML/RSS
+            if 'xml' in content_type or 'rss' in content_type or 'text/plain' in content_type:
+                body_str = body.decode('utf-8', errors='ignore')
+                target_host = urllib.parse.urlparse(TARGET).hostname
+                escaped_host = re.escape(target_host)
+                body_str = re.sub(f'https?://{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
+                body_str = re.sub(f'//{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'application/xml; charset=UTF-8'},
+                    'body': body_str
+                }
+            
+            # Return binary content
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': content_type},
+                'body': base64.b64encode(body).decode('utf-8'),
+                'isBase64Encoded': True
+            }
+            
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': f'Error: {str(e)}'
+        }
