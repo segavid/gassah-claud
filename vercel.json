@@ -1,62 +1,28 @@
 {
-  "version": 2,
   "rewrites": [
     {
-      "source": "/wp-content/:path*",
-      "destination": "https://gesseh.net/wp-content/:path*"
+      "source": "/wp-content/(.*)",
+      "destination": "https://gesseh.net/wp-content/$1"
     },
     {
-      "source": "/wp-includes/:path*",
-      "destination": "https://gesseh.net/wp-includes/:path*"
+      "source": "/wp-includes/(.*)",
+      "destination": "https://gesseh.net/wp-includes/$1"
     },
     {
-      "source": "/:path*.(css|js|jpg|jpeg|png|gif|svg|ico|woff|woff2|ttf|eot|webp|mp4|webm|ogg|mp3|wav|flac|aac)",
-      "destination": "https://gesseh.net/:path*.$1"
+      "source": "/(.*\\.(css|js|jpg|jpeg|png|gif|svg|ico|woff|woff2|ttf|eot|webp|mp4|webm))",
+      "destination": "https://gesseh.net/$1"
     },
     {
       "source": "/robots.txt",
       "destination": "https://gesseh.net/robots.txt"
     },
     {
-      "source": "/sitemap.xml",
-      "destination": "https://gesseh.net/sitemap.xml"
+      "source": "/sitemap(.*).xml",
+      "destination": "https://gesseh.net/sitemap$1.xml"
     },
     {
-      "source": "/sitemap:path*.xml",
-      "destination": "https://gesseh.net/sitemap:path*.xml"
-    },
-    {
-      "source": "/:path*",
+      "source": "/(.*)",
       "destination": "/api/index.py"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/wp-content/:path*",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/wp-includes/:path*",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/:path*.(css|js|jpg|jpeg|png|gif|svg|ico|woff|woff2|ttf|eot|webp)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
     }
   ]
 }
