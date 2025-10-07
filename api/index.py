@@ -165,7 +165,7 @@ class handler(BaseHTTPRequestHandler):
             path, query_string = path.split('?', 1)
             query_string = '?' + query_string
         
-        # Redirect static files directly to origin
+        # Redirect static files directly to origin (backup if vercel.json fails)
         static_extensions = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', 
                            '.woff', '.woff2', '.ttf', '.eot', '.webp', '.mp4', '.webm')
         if path.lower().endswith(static_extensions) or '/wp-content/' in path or '/wp-includes/' in path:
