@@ -11,9 +11,10 @@ ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:larg
 GOOGLE_VERIFY = "<meta name='google-site-verification' content='HWrhtgkCPV2OT-OWRzV60Vdl1pWxt35-aEZ7NNDTHWs' />"
 HEADER_BOX = """
 <div style="width:100%;background:#ff004c;color:#fff;padding:15px;text-align:center;font-size:20px;font-weight:bold;direction:rtl;">
-  <a href="https://z.3isk.news/all-turkish-series-esheeq/" style="color:#fff;text-decoration:none;">مسلسلات تركية مترجمة</a>
+  <a href="https://z.3isk.news/all-turkish-series-esheeq/" title="مسلسلات تركية" style="color:#fff;text-decoration:none;">مسلسلات تركية مترجمة</a>
 </div>
 """
+
 
 
 def base64_decode(encoded_str):
@@ -93,3 +94,4 @@ async def handler(request):
 
     except Exception as e:
         return Response(f"Error: {str(e)}", status_code=500, media_type="text/plain")
+
