@@ -1,13 +1,9 @@
-Here python code working good at lambda 
-adjust it to  use it at vercel via github : 
-
-
 import json
 import base64
 import re
 import urllib.parse
 import urllib.request
-from typing import Dict, Any, Optional
+from http.server import BaseHTTPRequestHandler
 
 TARGET = "https://gesseh.net"
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
@@ -19,8 +15,7 @@ HEADER_BOX = """
 """
 
 
-def base64_decode(encoded_str: str) -> Optional[str]:
-    """Decode base64 string with error handling"""
+def base64_decode(encoded_str):
     try:
         normalized = re.sub(r'\s+', '', encoded_str).replace('%3D', '=')
         normalized = normalized.replace('-', '+').replace('_', '/')
@@ -34,8 +29,7 @@ def base64_decode(encoded_str: str) -> Optional[str]:
         return None
 
 
-def build_server_url(server: Dict[str, str]) -> str:
-    """Build external embed URL based on server type"""
+def build_server_url(server):
     name = (server.get('name') or '').lower()
     server_id = server.get('id') or ''
     if re.match(r'^https?://', server_id, re.IGNORECASE):
@@ -55,8 +49,7 @@ def build_server_url(server: Dict[str, str]) -> str:
     return server_id
 
 
-def replace_embed_with_buttons(match: re.Match, worker_domain: str) -> str:
-    """Replace embed div with server buttons"""
+def replace_embed_with_buttons(match, worker_domain):
     encoded_post = match.group(1)
     decoded = base64_decode(encoded_post)
     if not decoded:
@@ -88,8 +81,7 @@ def replace_embed_with_buttons(match: re.Match, worker_domain: str) -> str:
 </div>"""
 
 
-def replace_fake_block_with_urls(match: re.Match, worker_domain: str) -> str:
-    """Replace fake script block with copyable server URLs"""
+def replace_fake_block_with_urls(match, worker_domain):
     enc_match = re.search(r'post=([^"\'\s]+)', match.group(0), re.IGNORECASE)
     if not enc_match:
         return match.group(0)
@@ -134,8 +126,7 @@ def replace_fake_block_with_urls(match: re.Match, worker_domain: str) -> str:
     return player_html + '<div class="singleInfo"'
 
 
-def process_html(body: str, worker_domain: str, canonical_url: str) -> str:
-    """Process HTML content with all replacements and canonical fix"""
+def process_html(body, worker_domain, canonical_url):
     target_host = urllib.parse.urlparse(TARGET).hostname
     escaped_host = re.escape(target_host)
     body = re.sub(f'https?://{escaped_host}', worker_domain, body, flags=re.IGNORECASE)
@@ -161,39 +152,62 @@ def process_html(body: str, worker_domain: str, canonical_url: str) -> str:
     body = re.sub(r'<meta[^>]*name=[\'"]robots[\'"][^>]*>', '', body, flags=re.IGNORECASE)
     body = re.sub(r'<meta[^>]*name=[\'"]google-site-verification[\'"][^>]*>', '', body, flags=re.IGNORECASE)
     body = re.sub(r'<link[^>]*rel=[\'"]canonical[\'"][^>]*>', '', body, flags=re.IGNORECASE)
-    # ✅ Fixed canonical line
     body = re.sub(r'<head>', f'<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n<link rel="canonical" href="{canonical_url}" />', body, count=1, flags=re.IGNORECASE)
     body = HEADER_BOX + "\n" + body
     return body
 
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler"""
-    path = event.get('rawPath', event.get('path', '/'))
-    query_string = event.get('rawQueryString', '')
-    if query_string:
-        query_string = '?' + query_string
-    headers = event.get('headers', {})
-    worker_domain = f"https://{headers.get('host', 'your-domain.com')}"
-    canonical_url = f"{worker_domain}{path}{query_string}"
-    upstream = TARGET + path + query_string
-    req_headers = {'Referer': TARGET, 'User-Agent': headers.get('user-agent', 'Mozilla/5.0')}
-    try:
-        req = urllib.request.Request(upstream, headers=req_headers)
-        with urllib.request.urlopen(req) as response:
-            content_type = response.headers.get('Content-Type', '').lower()
-            body = response.read()
-            if 'text/html' in content_type:
-                body_str = body.decode('utf-8', errors='ignore')
-                processed_body = process_html(body_str, worker_domain, canonical_url)
-                return {'statusCode': 200, 'headers': {'Content-Type': 'text/html; charset=UTF-8'}, 'body': processed_body}
-            if 'xml' in content_type or 'rss' in content_type or 'text/plain' in content_type:
-                body_str = body.decode('utf-8', errors='ignore')
-                target_host = urllib.parse.urlparse(TARGET).hostname
-                escaped_host = re.escape(target_host)
-                body_str = re.sub(f'https?://{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                body_str = re.sub(f'//{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                return {'statusCode': 200, 'headers': {'Content-Type': 'application/xml; charset=UTF-8'}, 'body': body_str}
-            return {'statusCode': 200, 'headers': {'Content-Type': content_type}, 'body': base64.b64encode(body).decode('utf-8'), 'isBase64Encoded': True}
-    except Exception as e:
-        return {'statusCode': 500, 'headers': {'Content-Type': 'text/plain'}, 'body': f'Error: {str(e)}'}
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path
+        query_string = ''
+        if '?' in path:
+            path, query_string = path.split('?', 1)
+            query_string = '?' + query_string
+        
+        worker_domain = f"https://{self.headers.get('Host', 'your-domain.com')}"
+        canonical_url = f"{worker_domain}{path}{query_string}"
+        upstream = TARGET + path + query_string
+        
+        req_headers = {
+            'Referer': TARGET,
+            'User-Agent': self.headers.get('User-Agent', 'Mozilla/5.0')
+        }
+        
+        try:
+            req = urllib.request.Request(upstream, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                content_type = response.headers.get('Content-Type', '').lower()
+                body = response.read()
+                
+                if 'text/html' in content_type:
+                    body_str = body.decode('utf-8', errors='ignore')
+                    processed_body = process_html(body_str, worker_domain, canonical_url)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=UTF-8')
+                    self.end_headers()
+                    self.wfile.write(processed_body.encode('utf-8'))
+                    return
+                
+                if 'xml' in content_type or 'rss' in content_type or 'text/plain' in content_type:
+                    body_str = body.decode('utf-8', errors='ignore')
+                    target_host = urllib.parse.urlparse(TARGET).hostname
+                    escaped_host = re.escape(target_host)
+                    body_str = re.sub(f'https?://{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
+                    body_str = re.sub(f'//{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/xml; charset=UTF-8')
+                    self.end_headers()
+                    self.wfile.write(body_str.encode('utf-8'))
+                    return
+                
+                self.send_response(200)
+                self.send_header('Content-Type', content_type)
+                self.end_headers()
+                self.wfile.write(body)
+                
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(f'Error: {str(e)}'.encode('utf-8'))
