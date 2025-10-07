@@ -165,6 +165,17 @@ class handler(BaseHTTPRequestHandler):
             path, query_string = path.split('?', 1)
             query_string = '?' + query_string
         
+        # Redirect static files directly to origin
+        static_extensions = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', 
+                           '.woff', '.woff2', '.ttf', '.eot', '.webp', '.mp4', '.webm')
+        if path.lower().endswith(static_extensions) or '/wp-content/' in path or '/wp-includes/' in path:
+            redirect_url = TARGET + path + query_string
+            self.send_response(301)
+            self.send_header('Location', redirect_url)
+            self.send_header('Cache-Control', 'public, max-age=31536000')
+            self.end_headers()
+            return
+        
         worker_domain = f"https://{self.headers.get('Host', 'your-domain.com')}"
         canonical_url = f"{worker_domain}{path}{query_string}"
         upstream = TARGET + path + query_string
