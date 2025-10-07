@@ -4,6 +4,7 @@ import re
 import urllib.parse
 import urllib.request
 from urllib.request import Request, urlopen
+from http import HTTPStatus
 
 TARGET = "https://gesseh.net"
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
@@ -134,21 +135,6 @@ def process_html(body, worker_domain, canonical_url):
     body = re.sub(r'(src|href)=["\']/([^"\']+)["\']', rf'\1="{worker_domain}/\2"', body, flags=re.IGNORECASE)
     body = re.sub(r'href=["\']\/(?=(?:%d9%85|مسلسل|الحلقة)[^"\']*)', f'href="{worker_domain}/', body, flags=re.IGNORECASE)
     body = re.sub(r'<a\s+title="الرئيسية"\s+href="/">الرئيسية</a>', '<a title="قصة عشق الاصلي" href="https://z.3isk.news/video/">قصة عشق الاصلي</a>', body, flags=re.IGNORECASE)
-
-    def decode_link(match):
-        try:
-            encoded = match.group(3)
-            decoded = base64_decode(urllib.parse.unquote(encoded))
-            if not decoded:
-                return match.group(0)
-            clean_url = re.sub(r'https?://(?:www\.)?gesseh\.net', worker_domain, decoded, flags=re.IGNORECASE)
-            return f'<a {match.group(1)}href="{clean_url}"{match.group(4)}>'
-        except Exception:
-            return match.group(0)
-
-    body = re.sub(r'<a\s+([^>]*?)href=(["\'])https?://arbandroid\.com/[^"\']+\?url=([^"\']+)\2([^>]*)>', decode_link, body, flags=re.IGNORECASE)
-    body = re.sub(r'<div[^>]*class="[^"]*embed[^"]*"[^>]*>[\s\S]*?post=([^"\'&\s]+)[\s\S]*?</div>', lambda m: replace_embed_with_buttons(m, worker_domain), body, flags=re.IGNORECASE)
-    body = re.sub(r'<script[^>]*type=["\']litespeed/javascript["\'][^>]*>[\s\S]*?</script>\s*<div class="secContainer bg">[\s\S]*?<div class="singleInfo"', lambda m: replace_fake_block_with_urls(m, worker_domain), body, flags=re.IGNORECASE)
     body = re.sub(r'<meta[^>]*name=[\'"]robots[\'"][^>]*>', '', body, flags=re.IGNORECASE)
     body = re.sub(r'<meta[^>]*name=[\'"]google-site-verification[\'"][^>]*>', '', body, flags=re.IGNORECASE)
     body = re.sub(r'<link[^>]*rel=[\'"]canonical[\'"][^>]*>', '', body, flags=re.IGNORECASE)
@@ -157,81 +143,46 @@ def process_html(body, worker_domain, canonical_url):
     return body
 
 
-def handler(request, context):
-    """Vercel serverless function handler"""
+# ✅ Correct entrypoint for Vercel (HTTP style)
+def handler(request, response):
     try:
-        # Get path from request
-        path = request.get('path', '/')
-        query = request.get('query', {})
-        headers = request.get('headers', {})
-        
-        # Build query string
-        query_string = ''
-        if query:
-            query_string = '?' + '&'.join([f"{k}={v}" for k, v in query.items()])
-        
-        # Check for static files - redirect to origin
-        static_extensions = ('.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', 
-                           '.woff', '.woff2', '.ttf', '.eot', '.webp', '.mp4', '.webm')
-        if path.lower().endswith(static_extensions) or '/wp-content/' in path or '/wp-includes/' in path:
-            return {
-                'statusCode': 301,
-                'headers': {
-                    'Location': TARGET + path + query_string,
-                    'Cache-Control': 'public, max-age=31536000'
-                }
-            }
-        
-        # Build URLs
-        worker_domain = f"https://{headers.get('host', 'your-domain.vercel.app')}"
-        canonical_url = f"{worker_domain}{path}{query_string}"
-        upstream = TARGET + path + query_string
-        
-        # Fetch from origin
+        url = request.url
+        host = request.headers.get("host", "your-domain.vercel.app")
+        parsed = urllib.parse.urlparse(url)
+        worker_domain = f"https://{host}"
+        canonical_url = worker_domain + parsed.path + (("?" + parsed.query) if parsed.query else "")
+        upstream = TARGET + parsed.path + (("?" + parsed.query) if parsed.query else "")
+
         req_headers = {
-            'Referer': TARGET,
-            'User-Agent': headers.get('user-agent', 'Mozilla/5.0')
+            "Referer": TARGET,
+            "User-Agent": request.headers.get("user-agent", "Mozilla/5.0")
         }
-        
+
         req = Request(upstream, headers=req_headers)
-        with urlopen(req, timeout=10) as response:
-            content_type = response.headers.get('Content-Type', '').lower()
-            body = response.read()
-            
-            # Process HTML
-            if 'text/html' in content_type:
-                body_str = body.decode('utf-8', errors='ignore')
-                processed_body = process_html(body_str, worker_domain, canonical_url)
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'text/html; charset=UTF-8'},
-                    'body': processed_body
-                }
-            
-            # Process XML/RSS
-            if 'xml' in content_type or 'rss' in content_type or 'text/plain' in content_type:
-                body_str = body.decode('utf-8', errors='ignore')
-                target_host = urllib.parse.urlparse(TARGET).hostname
-                escaped_host = re.escape(target_host)
-                body_str = re.sub(f'https?://{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                body_str = re.sub(f'//{escaped_host}', worker_domain, body_str, flags=re.IGNORECASE)
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/xml; charset=UTF-8'},
-                    'body': body_str
-                }
-            
-            # Return binary content
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': content_type},
-                'body': base64.b64encode(body).decode('utf-8'),
-                'isBase64Encoded': True
-            }
-            
+        with urlopen(req, timeout=10) as resp:
+            content_type = resp.headers.get("Content-Type", "").lower()
+            body = resp.read()
+
+            if "text/html" in content_type:
+                body_str = body.decode("utf-8", errors="ignore")
+                processed = process_html(body_str, worker_domain, canonical_url)
+                response.status_code = HTTPStatus.OK
+                response.headers["Content-Type"] = "text/html; charset=UTF-8"
+                response.write(processed)
+                return
+
+            if any(x in content_type for x in ["xml", "rss", "text/plain"]):
+                body_str = body.decode("utf-8", errors="ignore")
+                response.status_code = HTTPStatus.OK
+                response.headers["Content-Type"] = "application/xml; charset=UTF-8"
+                response.write(body_str)
+                return
+
+            response.status_code = HTTPStatus.OK
+            response.headers["Content-Type"] = content_type
+            response.write(body)
+
     except Exception as e:
-        return {
-            'statusCode': 500,
-            'headers': {'Content-Type': 'text/plain'},
-            'body': f'Error: {str(e)}'
-        }
+        response.status_code = 500
+        response.headers["Content-Type"] = "text/plain"
+        response.write(f"Error: {str(e)}")
